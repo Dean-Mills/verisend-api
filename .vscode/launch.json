@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "FastAPI",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "verisend.main:app",
+                "--reload"
+            ],
+            "jinja": true
+        },
+        {
+            "name": "Celery Worker",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "celery",
+            "args": [
+                "-A", "verisend.worker.celery_app",
+                "worker",
+                "--loglevel=info",
+                "--pool=solo"
+            ],
+            "jinja": true
+        }
+    ]
+}
