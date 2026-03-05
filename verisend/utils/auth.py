@@ -9,9 +9,9 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi import Depends
 from pydantic import BaseModel, SecretStr, field_validator
 import jwt
-from forms.models.roles import Role
-from forms.settings import settings
-from forms.models.authenticated_user import AuthenticatedUser
+from verisend.models.roles import Role
+from verisend.settings import settings
+from verisend.models.authenticated_user import AuthenticatedUser
 
 
 ROLE_HIERARCHY = [Role.USER, Role.PUBLISHER, Role.ADMIN, Role.SUPER_ADMIN]

@@ -18,7 +18,7 @@
             "request": "launch",
             "module": "celery",
             "args": [
-                "-A", "verisend.worker.celery_app",
+                "-A", "verisend.workers.celery_app",
                 "worker",
                 "--loglevel=info",
                 "--pool=solo"

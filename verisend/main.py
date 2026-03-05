@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from forms.api import routes
+from verisend.api import routes
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 import logfire
@@ -10,15 +10,15 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-logfire.configure()
+# logfire.configure()
 
 app = FastAPI(
     title="Verisend API",
 )
 
-logfire.instrument_fastapi(app)
-logfire.instrument_pydantic_ai()
-logfire.instrument_openai()
+# logfire.instrument_fastapi(app)
+# logfire.instrument_pydantic_ai()
+# logfire.instrument_openai()
 
 app.add_middleware(
     CORSMiddleware,

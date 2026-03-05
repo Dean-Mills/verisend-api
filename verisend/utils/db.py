@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession as _AsyncSession
 
 from fastapi import Depends
-from forms.settings import settings
+from verisend.settings import settings
 
 connection_str = settings.db_conn_str
 if connection_str.startswith("postgresql://"):

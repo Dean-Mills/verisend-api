@@ -11,8 +11,8 @@ from typing import Annotated
 from fastapi import Depends
 from keycloak import KeycloakAdmin, KeycloakOpenIDConnection
 
-from forms.settings import settings
-from forms.models.roles import Role
+from verisend.settings import settings
+from verisend.models.roles import Role
 
 logger = logging.getLogger(__name__)
 
