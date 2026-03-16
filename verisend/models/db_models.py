@@ -12,35 +12,14 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
-# TODO: For the PoC, user_id is pulled from the auth token. The User model
-# exists for FK integrity and to support the full user profile flow later.
-class User(SQLModel, table=True):
-    __tablename__ = "users"  # type: ignore
-
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
-    email: str = Field(unique=True, index=True)
-    first_name: str
-    last_name: str
-
-    created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime(timezone=True), nullable=False),
-    )
-    updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime(timezone=True), nullable=False),
-    )
-
-    forms: list["Form"] = Relationship(back_populates="user")
-    submissions: list["FormSubmission"] = Relationship(back_populates="user")
-    standard_field_values: list["UserStandardFieldValue"] = Relationship(back_populates="user")
+# TODO: Add User model when full user profile flow is needed.
+# For the PoC, user_id is pulled directly from the auth token (Keycloak sub claim).
 
 
 class Form(SQLModel, table=True):
     __tablename__ = "forms"  # type: ignore
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    user_id: UUID | None = Field(default=None, foreign_key="users.id", index=True)
 
     name: str
     original_filename: str
@@ -62,7 +41,6 @@ class Form(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
 
-    user: User = Relationship(back_populates="forms")
     images: list["FormImage"] = Relationship(back_populates="form")
     sections: list["FormSection"] = Relationship(back_populates="form")
     job: Optional["ProcessingJob"] = Relationship(back_populates="form")
@@ -140,7 +118,7 @@ class FormSubmission(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     form_id: UUID = Field(foreign_key="forms.id", index=True)
-    user_id: UUID = Field(foreign_key="users.id", index=True)
+    user_id: str = Field(index=True)
 
     data: list = Field(sa_column=Column(JSON, nullable=False))
 
@@ -150,7 +128,6 @@ class FormSubmission(SQLModel, table=True):
     )
 
     form: Form = Relationship(back_populates="submissions")
-    user: User = Relationship(back_populates="submissions")
 
 
 # TODO: Add FormAssignment table when multi-user flows are needed.
@@ -162,7 +139,7 @@ class UserStandardFieldValue(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("user_id", "standard_field_key"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    user_id: UUID = Field(foreign_key="users.id", index=True)
+    user_id: str = Field(index=True)
     standard_field_key: str = Field(index=True)
     value: str
 
@@ -170,5 +147,3 @@ class UserStandardFieldValue(SQLModel, table=True):
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
-
-    user: User = Relationship(back_populates="standard_field_values")

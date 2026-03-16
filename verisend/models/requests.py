@@ -44,7 +44,7 @@ class FieldSubmission(BaseModel):
     label: str
     field_type: str
     standard_field_key: str | None = None
-    value: str
+    value: str | None = None
 
 
 class SubmitFormRequest(BaseModel):

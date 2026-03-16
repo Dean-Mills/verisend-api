@@ -410,10 +410,9 @@ async def get_form_for_filling(
     sections = result.all()
 
     # Load user's standard field values
-    user_id = UUID(auth.user_id)
     result = await session.exec(
         select(UserStandardFieldValue)
-        .where(UserStandardFieldValue.user_id == user_id)
+        .where(UserStandardFieldValue.user_id == auth.user_id)
     )
     standard_values = {sfv.standard_field_key: sfv.value for sfv in result.all()}
 
@@ -473,13 +472,11 @@ async def submit_form(
     now = datetime.now(timezone.utc)
     submission_id = uuid4()
 
-    user_id = UUID(auth.user_id)
-
     # Save the submission
     submission = FormSubmission(
         id=submission_id,
         form_id=form_id,
-        user_id=user_id,
+        user_id=auth.user_id,
         data=[f.model_dump() for f in body.fields],
         created_at=now,
     )
@@ -494,7 +491,7 @@ async def submit_form(
 
     existing = await session.exec(
         select(UserStandardFieldValue).where(
-            UserStandardFieldValue.user_id == user_id,
+            UserStandardFieldValue.user_id == auth.user_id,
             UserStandardFieldValue.standard_field_key.in_(list(standard_fields.keys())),  # type: ignore[union-attr]
         )
     )
@@ -507,7 +504,7 @@ async def submit_form(
             session.add(existing_by_key[key])
         else:
             session.add(UserStandardFieldValue(
-                user_id=user_id,
+                user_id=auth.user_id,
                 standard_field_key=key,
                 value=value,
                 updated_at=now,
