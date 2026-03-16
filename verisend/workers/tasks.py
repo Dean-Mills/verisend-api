@@ -3,25 +3,36 @@ import logging
 import math
 import tempfile
 import json
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import UUID
 
 import httpx
+from sqlmodel import Session
 
 from verisend.agents.extraction_agent import BatchExtractionResult, merge_batch_results, run_batch
 from verisend.utils.pdf import extract_page_images
 from verisend.workers.celery_app import celery_app
 from verisend.utils.blob_storage import get_blob_storage_client
+from verisend.utils.db import sync_engine
+from verisend.models.db_models import FormSetup, FormSetupImage, FormSetupSection, ProcessingJob, Status
 from verisend.settings import settings
-
-import nest_asyncio
 
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 5
-nest_asyncio.apply()
 
 OUTPUT_DIR = Path(__file__).parent.parent.parent / "extraction_outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+
+def _update_job(session: Session, job: ProcessingJob, **kwargs):
+    for key, value in kwargs.items():
+        setattr(job, key, value)
+    job.updated_at = datetime.now(timezone.utc)
+    session.add(job)
+    session.commit()
+
 
 @celery_app.task
 def test_task(url: str):
@@ -29,7 +40,8 @@ def test_task(url: str):
     response = httpx.get(url)
     print(f"Downloaded {len(response.content)} bytes from blob")
     print("Worker done!")
-    
+
+
 async def _run_all_batches(batch_inputs: list[dict]) -> list[BatchExtractionResult]:
     """Run all batches sequentially in a single event loop."""
     results = []
@@ -41,98 +53,162 @@ async def _run_all_batches(batch_inputs: list[dict]) -> list[BatchExtractionResu
         )
         results.append(result)
     return results
-    
-@celery_app.task
-def extract_form(setup_id: str, pdf_url: str):
-    logger.info("Starting extraction: setup=%s", setup_id)
 
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=10)
+def extract_form(self, job_id: str, setup_id: str, pdf_url: str, summary: str | None, context: str | None):
+    import nest_asyncio
+    nest_asyncio.apply()
+
+    logger.info("Starting extraction: setup=%s", setup_id)
     temp_path = None
 
-    try:
-        # ------------------------------------------------------------------
-        # 1. Download PDF
-        # ------------------------------------------------------------------
-        logger.info("Downloading PDF...")
-        with httpx.Client(timeout=60.0) as client:
-            r = client.get(pdf_url)
-            r.raise_for_status()
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                tmp.write(r.content)
-                temp_path = tmp.name
+    with Session(sync_engine) as session:
+        job = session.get(ProcessingJob, UUID(job_id))
+        setup = session.get(FormSetup, UUID(setup_id))
 
-        # ------------------------------------------------------------------
-        # 2. Convert to page images
-        # ------------------------------------------------------------------
-        logger.info("Converting pages...")
-        page_images = extract_page_images(temp_path, dpi=150)
-        total_pages = len(page_images)
-        logger.info("Got %d pages", total_pages)
+        if not job or not setup:
+            logger.error("Job or setup not found: job=%s setup=%s", job_id, setup_id)
+            return
 
-        # ------------------------------------------------------------------
-        # 3. Upload page images to blob
-        # ------------------------------------------------------------------
-        logger.info("Uploading page images...")
-        page_records = []
+        try:
+            # ------------------------------------------------------------------
+            # 1. Download PDF
+            # ------------------------------------------------------------------
+            _update_job(session, job, status=Status.PROCESSING.value, current_step="Downloading document", progress=5)
 
-        with get_blob_storage_client() as blob_service:
-            container = blob_service.get_container_client(settings.blob_storage_container_name)
+            with httpx.Client(timeout=60.0) as client:
+                r = client.get(pdf_url)
+                r.raise_for_status()
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    tmp.write(r.content)
+                    temp_path = tmp.name
 
-            for page_num, image_data in enumerate(page_images, start=1):
-                blob_path = f"setups/{setup_id}/pages/page_{page_num}.png"
-                blob_client = container.get_blob_client(blob_path)
-                blob_client.upload_blob(image_data, overwrite=True)
-                page_records.append({"page_number": page_num, "url": blob_client.url})
-                logger.info("Uploaded page %d: %s", page_num, blob_client.url)
+            # ------------------------------------------------------------------
+            # 2. Convert to page images
+            # ------------------------------------------------------------------
+            _update_job(session, job, current_step="Converting pages", progress=10)
 
-        # ------------------------------------------------------------------
-        # 4. Run extraction in batches with windowing
-        # ------------------------------------------------------------------
-        total_batches = math.ceil(total_pages / BATCH_SIZE)
-        batch_results: list[BatchExtractionResult] = []
+            page_images = extract_page_images(temp_path, dpi=150)
+            total_pages = len(page_images)
+            logger.info("Got %d pages", total_pages)
 
-        batch_inputs = []
-        for batch_index in range(total_batches):
-            start = batch_index * BATCH_SIZE
-            end = min(start + BATCH_SIZE, total_pages)
-            batch_pages = page_records[start:end]
+            # ------------------------------------------------------------------
+            # 3. Upload page images to blob
+            # ------------------------------------------------------------------
+            _update_job(session, job, current_step="Uploading page images", progress=15)
 
-            left_context_url = page_records[start - 1]["url"] if start > 0 else None
-            right_context_url = page_records[end]["url"] if end < total_pages else None
+            page_records = []
 
-            page_range = f"{batch_pages[0]['page_number']}–{batch_pages[-1]['page_number']}"
-            logger.info("Queuing batch %d/%d — pages %s", batch_index + 1, total_batches, page_range)
+            with get_blob_storage_client() as blob_service:
+                container = blob_service.get_container_client(settings.blob_storage_container_name)
 
-            batch_inputs.append({
-                "pages": batch_pages,
-                "left_context_url": left_context_url,
-                "right_context_url": right_context_url,
-            })
+                for page_num, image_data in enumerate(page_images, start=1):
+                    blob_path = f"setups/{setup_id}/pages/page_{page_num}.png"
+                    blob_client = container.get_blob_client(blob_path)
+                    blob_client.upload_blob(image_data, overwrite=True)
 
-        batch_results = asyncio.run(_run_all_batches(batch_inputs))
+                    db_image = FormSetupImage(
+                        setup_id=UUID(setup_id),
+                        page_number=page_num,
+                        image_url=blob_client.url,
+                    )
+                    session.add(db_image)
+                    page_records.append({"page_number": page_num, "url": blob_client.url})
+                    logger.info("Uploaded page %d: %s", page_num, blob_client.url)
 
-        # ------------------------------------------------------------------
-        # 5. Merge and print
-        # ------------------------------------------------------------------
-        merged_sections = merge_batch_results(batch_results)
-        logger.info("Merged into %d sections", len(merged_sections))
+            session.commit()
 
-        # Write to file so we can inspect the full output
-        output = [
-            {
-                "name": s.name,
-                "description": s.description,
-                "page_start": s.page_start,
-                "page_end": s.page_end,
-                "fields": [f.model_dump() for f in s.fields],
-            }
-            for s in merged_sections
-        ]
+            # ------------------------------------------------------------------
+            # 4. Run extraction in batches with windowing
+            # ------------------------------------------------------------------
+            total_batches = math.ceil(total_pages / BATCH_SIZE)
+            batch_inputs = []
 
-        output_path = OUTPUT_DIR / f"extraction_{setup_id}.json"
-        output_path.write_text(json.dumps(output, indent=2))
-        logger.info("Result written to %s", output_path)
-        logger.info("Sections: %d, Total fields: %d", len(merged_sections), sum(len(s.fields) for s in merged_sections))
+            for batch_index in range(total_batches):
+                start = batch_index * BATCH_SIZE
+                end = min(start + BATCH_SIZE, total_pages)
+                batch_pages = page_records[start:end]
 
-    finally:
-        if temp_path:
-            Path(temp_path).unlink(missing_ok=True)
+                left_context_url = page_records[start - 1]["url"] if start > 0 else None
+                right_context_url = page_records[end]["url"] if end < total_pages else None
+
+                page_range = f"{batch_pages[0]['page_number']}–{batch_pages[-1]['page_number']}"
+                progress = 20 + int((batch_index / total_batches) * 70)
+
+                _update_job(
+                    session, job,
+                    current_step=f"Extracting pages {page_range} (batch {batch_index + 1} of {total_batches})",
+                    progress=progress,
+                )
+
+                logger.info("Queuing batch %d/%d — pages %s", batch_index + 1, total_batches, page_range)
+
+                batch_inputs.append({
+                    "pages": batch_pages,
+                    "left_context_url": left_context_url,
+                    "right_context_url": right_context_url,
+                })
+
+            batch_results = asyncio.run(_run_all_batches(batch_inputs))
+
+            # ------------------------------------------------------------------
+            # 5. Merge sections
+            # ------------------------------------------------------------------
+            _update_job(session, job, current_step="Merging sections", progress=92)
+
+            merged_sections = merge_batch_results(batch_results)
+            logger.info("Merged into %d sections", len(merged_sections))
+
+            # ------------------------------------------------------------------
+            # 6. Save sections to DB
+            # ------------------------------------------------------------------
+            _update_job(session, job, current_step="Saving results", progress=95)
+
+            for i, section in enumerate(merged_sections, start=1):
+                db_section = FormSetupSection(
+                    setup_id=UUID(setup_id),
+                    section_number=i,
+                    name=section.name,
+                    description=section.description,
+                    page_start=section.page_start,
+                    page_end=section.page_end,
+                    fields=[f.model_dump() for f in section.fields],
+                )
+                session.add(db_section)
+
+            setup.status = Status.REVIEW.value
+            setup.updated_at = datetime.now(timezone.utc)
+            session.add(setup)
+
+            _update_job(session, job, status=Status.REVIEW.value, current_step="Done", progress=100)
+
+            logger.info("Extraction complete: setup=%s sections=%d", setup_id, len(merged_sections))
+
+            # Keep file output for debugging
+            output = [
+                {
+                    "name": s.name,
+                    "description": s.description,
+                    "page_start": s.page_start,
+                    "page_end": s.page_end,
+                    "fields": [f.model_dump() for f in s.fields],
+                }
+                for s in merged_sections
+            ]
+            output_path = OUTPUT_DIR / f"extraction_{setup_id}.json"
+            output_path.write_text(json.dumps(output, indent=2))
+            logger.info("Result written to %s", output_path)
+
+        except Exception as exc:
+            logger.exception("Extraction failed for setup=%s", setup_id)
+            _update_job(session, job, status=Status.FAILED.value, current_step="Failed", error=str(exc), progress=0)
+            setup.status = Status.FAILED.value
+            setup.updated_at = datetime.now(timezone.utc)
+            session.add(setup)
+            session.commit()
+            raise self.retry(exc=exc)
+
+        finally:
+            if temp_path:
+                Path(temp_path).unlink(missing_ok=True)

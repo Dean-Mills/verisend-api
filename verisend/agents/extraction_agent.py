@@ -139,9 +139,34 @@ Only leave standard_field_key as null if the field is genuinely domain-specific
 with no reasonable standard mapping — e.g. "Membership Number", "Policy Reference",
 "Claim Number". When in doubt, map it.
 
+## Checkbox & Radio Collapsing — critical
+Do NOT extract each tick box as a separate field. Collapse related options into one field:
+
+- **Yes / No pairs**: A question with a Yes tick box and a No tick box is ONE field.
+  Use field_type "radio" with options ["Yes", "No"]. The label is the question itself.
+  Example: "Do you smoke? ☐ Yes ☐ No"
+    → ONE field: label "Do you smoke", field_type "radio", options ["Yes", "No"]
+    ✗ WRONG: two checkbox fields "Do you smoke - Yes" and "Do you smoke - No"
+
+- **Grouped checkboxes under one question**: Multiple tick boxes that are all options for
+  a single question become ONE field.
+  - If the options are mutually exclusive (pick one), use field_type "radio".
+  - If multiple can be selected, use field_type "checkbox" with all options in the options list.
+  Example: "Preferred contact method: ☐ Email ☐ Phone ☐ Post"
+    → ONE field: label "Preferred contact method", field_type "checkbox", options ["Email", "Phone", "Post"]
+  Example: "Employment status: ☐ Full-time ☐ Part-time ☐ Self-employed ☐ Unemployed"
+    → ONE field: label "Employment status", field_type "radio", options ["Full-time", "Part-time", "Self-employed", "Unemployed"]
+
+- **Standalone single checkbox** (no paired options): Only these remain as field_type "checkbox"
+  with no options list. Example: "I agree to the terms and conditions ☐"
+    → ONE field: label "I agree to the terms and conditions", field_type "checkbox"
+
+The key principle: look at the QUESTION being asked, not the individual tick boxes. Each
+question = one field. The tick boxes are the options for that field.
+
 ## Extraction Rules
 - Extract EVERY field — no input box, checkbox, radio button, or signature line may be skipped
-- Do NOT merge fields that should stay separate
+- Collapse related checkboxes/radio buttons into single fields as described above
 - You MAY split one vague field into multiple standard fields where it clearly makes sense
 - Do NOT invent fields that are not visible on the form
 - For tables with repeating rows, extract each cell as a separate field with context:
@@ -178,6 +203,27 @@ If the very first section in your extraction batch continues from a left context
 set is_continuation: true on that section. Its fields will be merged with the
 previous batch's last section automatically. All other sections should have
 is_continuation: false.
+
+## Standard Field Mapping Scope
+Standard field keys represent the MAIN MEMBER / PRIMARY applicant only — the person filling in the form.
+
+Only map a field to a standard_field_key if it clearly belongs to the primary applicant.
+
+Do NOT map fields that belong to:
+- Dependants (spouse, children, parents)
+- Third parties (doctor, employer, next of kin)
+- Secondary applicants (co-applicant, guarantor)
+- Family members (mother, father, sibling)
+
+Examples:
+- "Main Member First Name" → standard_field_key: "first_name"   ✓
+- "Dependant First Name"   → standard_field_key: null           ✓
+- "Mother's ID Number"     → standard_field_key: null           ✓
+- "Employer Name"          → standard_field_key: "employer_name" ✓  (employer of the main member)
+- "Doctor Name"            → standard_field_key: null           ✓
+
+When in doubt about whether a field belongs to the primary applicant, leave standard_field_key as null.
+
 """,
 )
 
