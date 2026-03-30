@@ -97,6 +97,28 @@ class StandardFieldResponse(BaseModel):
     description: str | None
 
 
+class OrgResponse(BaseModel):
+    id: UUID
+    name: str
+    owner_id: UUID
+    public_key: str | None
+    created_at: datetime
+
+
+class OrgMemberResponse(BaseModel):
+    user_id: UUID
+    email: str
+    has_public_key: bool
+    has_key_grant: bool
+    created_at: datetime
+
+
+class KeyGrantResponse(BaseModel):
+    org_id: UUID
+    user_id: UUID
+    created_at: datetime
+
+
 class SubmitFormResponse(BaseModel):
     submission_id: UUID
 

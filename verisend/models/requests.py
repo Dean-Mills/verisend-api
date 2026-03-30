@@ -71,6 +71,20 @@ class UpdateStandardFieldRequest(BaseModel):
     description: str | None = None
 
 
+class CreateOrgRequest(BaseModel):
+    name: str
+    public_key: str
+    encrypted_org_private_key: str  # encrypted with the owner's public key
+
+
+class InviteMemberRequest(BaseModel):
+    email: EmailStr
+
+
+class CreateKeyGrantRequest(BaseModel):
+    encrypted_org_private_key: str  # encrypted with the member's public key
+
+
 class StylingRequest(BaseModel):
     primary_color: str
     accent_color: str

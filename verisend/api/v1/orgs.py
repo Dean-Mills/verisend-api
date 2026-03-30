@@ -1,0 +1,272 @@
+import asyncio
+from uuid import UUID
+
+from fastapi import APIRouter, HTTPException, status
+from sqlmodel import select
+
+from verisend.models.db_models import Organization, OrgMembership, OrgKeyGrant, User
+from verisend.models.requests import CreateOrgRequest, InviteMemberRequest, CreateKeyGrantRequest
+from verisend.models.responses import OrgResponse, OrgMemberResponse, KeyGrantResponse
+from verisend.utils.auth import RequireOrgUser
+from verisend.utils.db import AsyncSession
+from verisend.utils.keycloak_admin import KeycloakAdminDep
+from verisend.models.roles import Role
+
+
+TAGS = [
+    {
+        "name": "Organizations",
+        "description": "Organization management endpoints",
+    },
+]
+
+router = APIRouter(prefix="/orgs", tags=["Organizations"])
+
+
+async def _require_org_member(session: AsyncSession, org_id: UUID, user_id: UUID) -> OrgMembership:
+    """Verify user is a member of the org, return membership."""
+    result = await session.exec(
+        select(OrgMembership).where(
+            OrgMembership.org_id == org_id,
+            OrgMembership.user_id == user_id,
+        )
+    )
+    membership = result.first()
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this organization")
+    return membership
+
+
+async def _require_org_owner(session: AsyncSession, org: Organization, user_id: UUID) -> None:
+    """Verify user is the owner of the org."""
+    if org.owner_id != user_id:
+        raise HTTPException(status_code=403, detail="Only the organization owner can perform this action")
+
+
+@router.post("", response_model=OrgResponse, status_code=status.HTTP_201_CREATED)
+async def create_org(
+    body: CreateOrgRequest,
+    auth: RequireOrgUser,
+    session: AsyncSession,
+):
+    """Create a new organization. The authenticated user becomes the owner."""
+    user_id = UUID(auth.user_id)
+
+    org = Organization(
+        name=body.name,
+        owner_id=user_id,
+        public_key=body.public_key,
+    )
+    session.add(org)
+    await session.flush()
+
+    # Owner is also a member
+    membership = OrgMembership(org_id=org.id, user_id=user_id)
+    session.add(membership)
+
+    # Owner's key grant
+    key_grant = OrgKeyGrant(
+        org_id=org.id,
+        user_id=user_id,
+        encrypted_org_private_key=body.encrypted_org_private_key,
+    )
+    session.add(key_grant)
+
+    await session.commit()
+    await session.refresh(org)
+    return org
+
+
+@router.get("/{org_id}", response_model=OrgResponse)
+async def get_org(
+    org_id: UUID,
+    auth: RequireOrgUser,
+    session: AsyncSession,
+):
+    """Get organization details. Must be a member."""
+    org = await session.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    await _require_org_member(session, org_id, UUID(auth.user_id))
+    return org
+
+
+@router.get("/{org_id}/members", response_model=list[OrgMemberResponse])
+async def list_members(
+    org_id: UUID,
+    auth: RequireOrgUser,
+    session: AsyncSession,
+):
+    """List org members with their key grant status."""
+    org = await session.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    await _require_org_member(session, org_id, UUID(auth.user_id))
+
+    # Get all memberships with user data
+    result = await session.exec(
+        select(OrgMembership, User).join(User).where(OrgMembership.org_id == org_id)
+    )
+    memberships = result.all()
+
+    # Get existing key grants for this org
+    grant_result = await session.exec(
+        select(OrgKeyGrant.user_id).where(OrgKeyGrant.org_id == org_id)
+    )
+    granted_user_ids = set(grant_result.all())
+
+    return [
+        OrgMemberResponse(
+            user_id=user.id,
+            email=user.email,
+            has_public_key=user.public_key is not None,
+            has_key_grant=user.id in granted_user_ids,
+            created_at=membership.created_at,
+        )
+        for membership, user in memberships
+    ]
+
+
+@router.post("/{org_id}/members", response_model=OrgMemberResponse, status_code=status.HTTP_201_CREATED)
+async def invite_member(
+    org_id: UUID,
+    body: InviteMemberRequest,
+    auth: RequireOrgUser,
+    session: AsyncSession,
+    keycloak: KeycloakAdminDep,
+):
+    """Invite a user to the org by email. Owner only."""
+    org = await session.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    await _require_org_owner(session, org, UUID(auth.user_id))
+
+    email = body.email.lower()
+
+    # Find or create user in Keycloak
+    kc_user = await asyncio.to_thread(keycloak.find_user_by_email, email)
+    if not kc_user:
+        kc_user = await asyncio.to_thread(keycloak.create_user, email)
+
+    kc_user_id = UUID(kc_user["id"])
+
+    # Ensure local user record exists
+    user = await session.get(User, kc_user_id)
+    if not user:
+        user = User(id=kc_user_id, email=email)
+        session.add(user)
+
+    # Check not already a member
+    existing = await session.exec(
+        select(OrgMembership).where(
+            OrgMembership.org_id == org_id,
+            OrgMembership.user_id == kc_user_id,
+        )
+    )
+    if existing.first():
+        raise HTTPException(status_code=409, detail="User is already a member of this organization")
+
+    # Create membership
+    membership = OrgMembership(org_id=org_id, user_id=kc_user_id)
+    session.add(membership)
+
+    # Assign org_user role in Keycloak
+    await asyncio.to_thread(keycloak.assign_role, str(kc_user_id), Role.ORG_USER)
+
+    await session.commit()
+    await session.refresh(membership)
+
+    return OrgMemberResponse(
+        user_id=user.id,
+        email=user.email,
+        has_public_key=user.public_key is not None,
+        has_key_grant=False,
+        created_at=membership.created_at,
+    )
+
+
+@router.post(
+    "/{org_id}/members/{user_id}/key-grant",
+    response_model=KeyGrantResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_key_grant(
+    org_id: UUID,
+    user_id: UUID,
+    body: CreateKeyGrantRequest,
+    auth: RequireOrgUser,
+    session: AsyncSession,
+):
+    """
+    Grant a member access to the org's encrypted private key.
+    The caller must already have a key grant themselves.
+    """
+    org = await session.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    # Verify caller has a key grant (meaning they have access to the org private key)
+    caller_grant = await session.exec(
+        select(OrgKeyGrant).where(
+            OrgKeyGrant.org_id == org_id,
+            OrgKeyGrant.user_id == UUID(auth.user_id),
+        )
+    )
+    if not caller_grant.first():
+        raise HTTPException(status_code=403, detail="You do not have key access to this organization")
+
+    # Verify target user is a member
+    await _require_org_member(session, org_id, user_id)
+
+    # Verify target user has a public key
+    target_user = await session.get(User, user_id)
+    if not target_user or not target_user.public_key:
+        raise HTTPException(status_code=400, detail="User has not set up their keypair yet")
+
+    # Check no existing grant
+    existing = await session.exec(
+        select(OrgKeyGrant).where(
+            OrgKeyGrant.org_id == org_id,
+            OrgKeyGrant.user_id == user_id,
+        )
+    )
+    if existing.first():
+        raise HTTPException(status_code=409, detail="User already has key access")
+
+    key_grant = OrgKeyGrant(
+        org_id=org_id,
+        user_id=user_id,
+        encrypted_org_private_key=body.encrypted_org_private_key,
+    )
+    session.add(key_grant)
+    await session.commit()
+    await session.refresh(key_grant)
+
+    return KeyGrantResponse(
+        org_id=key_grant.org_id,
+        user_id=key_grant.user_id,
+        created_at=key_grant.created_at,
+    )
+
+
+@router.get("/{org_id}/key-grant", response_model=CreateKeyGrantRequest)
+async def get_my_key_grant(
+    org_id: UUID,
+    auth: RequireOrgUser,
+    session: AsyncSession,
+):
+    """Get the authenticated user's key grant for this org."""
+    result = await session.exec(
+        select(OrgKeyGrant).where(
+            OrgKeyGrant.org_id == org_id,
+            OrgKeyGrant.user_id == UUID(auth.user_id),
+        )
+    )
+    grant = result.first()
+    if not grant:
+        raise HTTPException(status_code=404, detail="No key grant found")
+
+    return CreateKeyGrantRequest(encrypted_org_private_key=grant.encrypted_org_private_key)

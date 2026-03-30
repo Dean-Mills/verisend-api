@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from . import (
     test,
     forms,
+    orgs,
     standard_fields,
     vault,
 )
@@ -10,6 +11,7 @@ from . import (
 TAGS = [
     *test.TAGS,
     *forms.TAGS,
+    *orgs.TAGS,
     *standard_fields.TAGS,
     *vault.TAGS,
 ]
@@ -17,5 +19,6 @@ TAGS = [
 router = APIRouter()
 router.include_router(test.router)
 router.include_router(forms.router)
+router.include_router(orgs.router)
 router.include_router(standard_fields.router)
 router.include_router(vault.router)
