@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID, uuid4
 from enum import Enum
-from sqlmodel import Column, DateTime, Field, JSON, Relationship, SQLModel
+from sqlmodel import Column, DateTime, Field, JSON, Relationship, SQLModel, UniqueConstraint
 
 
 class JobStatus(str, Enum):
@@ -12,14 +12,105 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
-# TODO: Add User model when full user profile flow is needed.
-# For the PoC, user_id is pulled directly from the auth token (Keycloak sub claim).
+class User(SQLModel, table=True):
+    __tablename__ = "users"  # type: ignore
+
+    id: UUID = Field(primary_key=True)  # matches Keycloak sub
+    email: str = Field(unique=True, index=True)
+    public_key: str | None = None
+    encrypted_private_key: str | None = None
+
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    memberships: list["OrgMembership"] = Relationship(back_populates="user")
+    key_grants: list["OrgKeyGrant"] = Relationship(back_populates="user")
+
+
+class Organization(SQLModel, table=True):
+    __tablename__ = "organizations"  # type: ignore
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    name: str
+    owner_id: UUID = Field(foreign_key="users.id", index=True)
+    public_key: str | None = None
+
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    owner: User = Relationship()
+    members: list["OrgMembership"] = Relationship(back_populates="organization")
+    key_grants: list["OrgKeyGrant"] = Relationship(back_populates="organization")
+    api_keys: list["OrgApiKey"] = Relationship(back_populates="organization")
+
+
+class OrgMembership(SQLModel, table=True):
+    __tablename__ = "org_memberships"  # type: ignore
+    __table_args__ = (UniqueConstraint("org_id", "user_id"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    org_id: UUID = Field(foreign_key="organizations.id", index=True)
+    user_id: UUID = Field(foreign_key="users.id", index=True)
+
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    organization: Organization = Relationship(back_populates="members")
+    user: User = Relationship(back_populates="memberships")
+
+
+class OrgKeyGrant(SQLModel, table=True):
+    __tablename__ = "org_key_grants"  # type: ignore
+    __table_args__ = (UniqueConstraint("org_id", "user_id"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    org_id: UUID = Field(foreign_key="organizations.id", index=True)
+    user_id: UUID = Field(foreign_key="users.id", index=True)
+    encrypted_org_private_key: str
+
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    organization: Organization = Relationship(back_populates="key_grants")
+    user: User = Relationship(back_populates="key_grants")
+
+
+class OrgApiKey(SQLModel, table=True):
+    __tablename__ = "org_api_keys"  # type: ignore
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    org_id: UUID = Field(foreign_key="organizations.id", index=True)
+    name: str
+    key_hash: str = Field(unique=True, index=True)
+    public_key: str
+    encrypted_private_key: str
+    encrypted_org_private_key: str
+
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    organization: Organization = Relationship(back_populates="api_keys")
 
 
 class Form(SQLModel, table=True):
     __tablename__ = "forms"  # type: ignore
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
+    org_id: UUID = Field(foreign_key="organizations.id", index=True)
 
     name: str
     original_filename: str
@@ -118,9 +209,13 @@ class FormSubmission(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     form_id: UUID = Field(foreign_key="forms.id", index=True)
-    user_id: str = Field(index=True)
+    user_id: UUID = Field(foreign_key="users.id", index=True)
 
-    data: list = Field(sa_column=Column(JSON, nullable=False))
+    data_url: str | None = None
+    completed_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True)),
+    )
 
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -128,10 +223,7 @@ class FormSubmission(SQLModel, table=True):
     )
 
     form: Form = Relationship(back_populates="submissions")
-
-
-# TODO: Add FormAssignment table when multi-user flows are needed.
-# For now any user can fill in any active form.
+    user: User = Relationship()
 
 
 class StandardField(SQLModel, table=True):
