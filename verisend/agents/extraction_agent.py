@@ -1,6 +1,3 @@
-import json
-from pathlib import Path
-
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
@@ -8,26 +5,8 @@ from pydantic_ai.providers.google import GoogleProvider
 
 from pydantic_ai.messages import ImageUrl, UserContent
 
+from verisend.models.db_models import StandardField
 from verisend.settings import settings
-
-
-# =============================================================================
-# Standard fields context — loaded once at startup
-# =============================================================================
-
-def _load_standard_fields() -> str:
-    path = Path(__file__).parent.parent / "data" / "standard_fields.json"
-    fields = json.loads(path.read_text())
-    lines = []
-    for f in fields:
-        line = f"- {f['key']} ({f['field_type']}): {f['description']}"
-        if f.get("default_options"):
-            line += f" | default options: {', '.join(f['default_options'])}"
-        lines.append(line)
-    return "\n".join(lines)
-
-
-STANDARD_FIELDS_CONTEXT = _load_standard_fields()
 
 
 # =============================================================================
@@ -73,11 +52,21 @@ model_settings = GoogleModelSettings(
 )
 google_model = GoogleModel("gemini-3.1-pro-preview", provider=provider)
 
-extraction_agent = Agent(
-    model=google_model,
-    model_settings=model_settings,
-    output_type=BatchExtractionResult,
-    system_prompt=f"""
+def _format_standard_fields(fields: list[StandardField]) -> str:
+    lines = []
+    for f in fields:
+        parts = [f"- {f.key} ({f.field_type})"]
+        if f.group:
+            parts.append(f"[group: {f.group}]")
+        parts.append(f": {f.description}")
+        line = " ".join(parts)
+        if f.default_options:
+            line += f" | default options: {', '.join(f.default_options)}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+SYSTEM_PROMPT_TEMPLATE = """
 You are an expert at analysing PDF form images and extracting every field precisely.
 You are also opinionated — you actively normalise fields to match a known standard schema.
 
@@ -99,7 +88,7 @@ Use only these types:
 You must map fields to these standard keys wherever possible.
 Each entry shows the key, its field type, default options (if any), and what form labels typically map to it:
 
-{STANDARD_FIELDS_CONTEXT}
+{standard_fields_context}
 
 ## When Mapping to a Standard Field
 When you set standard_field_key, you MUST also:
@@ -168,11 +157,25 @@ question = one field. The tick boxes are the options for that field.
 - Extract EVERY field — no input box, checkbox, radio button, or signature line may be skipped
 - Collapse related checkboxes/radio buttons into single fields as described above
 - You MAY split one vague field into multiple standard fields where it clearly makes sense
-- Do NOT invent fields that are not visible on the form
+- Do NOT invent fields that are not visible on the form (see Group Completeness for the one exception)
 - For tables with repeating rows, extract each cell as a separate field with context:
   e.g. "Dependent 1 - Name", "Dependent 1 - Date of Birth", "Dependent 2 - Name"
 - Extract fields in order: top to bottom, left to right
 - Trust the image — it is the source of truth
+
+## Group Completeness
+Some standard fields belong to a group (marked with [group: ...] above).
+If you map ANY field in a section to a standard field from a group, you MUST
+include ALL other standard fields from that same group in the section.
+
+This is the ONE exception to the "do not invent fields" rule — add the missing
+group members with the standard field's label, field_type, and default_options.
+Set required: false on these added fields.
+
+Example: A form has "Street Address" and "City" but no postal code or country.
+You map address_line_1 and city — both are in the "address" group.
+You must also add address_line_2, postal_code, and country to that section
+so the group is complete.
 
 ## Sections
 Group fields into logical sections based on visual headers, separators, or content grouping.
@@ -204,27 +207,40 @@ set is_continuation: true on that section. Its fields will be merged with the
 previous batch's last section automatically. All other sections should have
 is_continuation: false.
 
-## Standard Field Mapping Scope
+## Standard Field Mapping Scope — critical
 Standard field keys represent the MAIN MEMBER / PRIMARY applicant only — the person filling in the form.
 
-Only map a field to a standard_field_key if it clearly belongs to the primary applicant.
+USE THE SECTION NAME to determine ownership. The section a field sits in is the strongest
+signal for whether it belongs to the primary applicant or someone else.
 
-Do NOT map fields that belong to:
-- Dependants (spouse, children, parents)
-- Third parties (doctor, employer, next of kin)
-- Secondary applicants (co-applicant, guarantor)
-- Family members (mother, father, sibling)
+Do NOT map fields to standard keys if the SECTION is about someone other than the primary applicant:
+- Sections like "Details of Mother", "Details of Father", "Spouse Information",
+  "Dependant Details", "Next of Kin", "Doctor Details", "Guarantor" etc.
+  → ALL fields in these sections get standard_field_key: null, even if the field
+  labels match standard fields perfectly (e.g. "First Name", "ID Number").
+
+Only map to standard keys when the section clearly belongs to the primary applicant:
+- "Personal Details", "Your Information", "Member Details", "Applicant Details",
+  "Banking Details" (of the applicant), "Employment Details" (of the applicant), etc.
 
 Examples:
-- "Main Member First Name" → standard_field_key: "first_name"   ✓
-- "Dependant First Name"   → standard_field_key: null           ✓
-- "Mother's ID Number"     → standard_field_key: null           ✓
-- "Employer Name"          → standard_field_key: "employer_name" ✓  (employer of the main member)
-- "Doctor Name"            → standard_field_key: null           ✓
+- Section "Personal Details" → "First Name" → standard_field_key: "first_name"   ✓
+- Section "Details of Mother" → "First Name" → standard_field_key: null           ✓
+- Section "Details of Father" → "ID Number" → standard_field_key: null            ✓
+- Section "Employment Details" → "Employer Name" → standard_field_key: "employer_name" ✓
+- Section "Doctor Details" → "Name" → standard_field_key: null                    ✓
+- Section "Banking Details" → "Account Number" → standard_field_key: "bank_account_number" ✓
 
-When in doubt about whether a field belongs to the primary applicant, leave standard_field_key as null.
+When in doubt about whether a section belongs to the primary applicant, leave ALL
+fields in that section with standard_field_key: null. It is better to miss a mapping
+than to incorrectly map a third party's field.
 
-""",
+"""
+
+extraction_agent = Agent(
+    model=google_model,
+    model_settings=model_settings,
+    output_type=BatchExtractionResult,
 )
 
 
@@ -236,6 +252,7 @@ async def run_batch(
     pages: list[dict],
     left_context_url: str | None,
     right_context_url: str | None,
+    standard_fields: list[StandardField],
 ) -> BatchExtractionResult:
     message_content: list[UserContent] = []
     prompt_parts = []
@@ -275,7 +292,14 @@ async def run_batch(
 
     message_content.append("\n\n".join(prompt_parts))
 
-    result = await extraction_agent.run(message_content)
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        standard_fields_context=_format_standard_fields(standard_fields)
+    )
+
+    result = await extraction_agent.run(
+        message_content,
+        system_prompt=system_prompt,
+    )
     return result.output
 
 # =============================================================================

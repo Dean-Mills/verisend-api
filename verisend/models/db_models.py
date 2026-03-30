@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID, uuid4
 from enum import Enum
-from sqlmodel import Column, DateTime, Field, JSON, Relationship, SQLModel, UniqueConstraint
+from sqlmodel import Column, DateTime, Field, JSON, Relationship, SQLModel
 
 
 class JobStatus(str, Enum):
@@ -134,6 +134,18 @@ class FormSubmission(SQLModel, table=True):
 # For now any user can fill in any active form.
 
 
+class StandardField(SQLModel, table=True):
+    __tablename__ = "standard_fields"  # type: ignore
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    key: str = Field(unique=True, index=True)
+    label: str
+    field_type: str
+    group: str | None = None
+    default_options: list | None = Field(default=None, sa_column=Column(JSON))
+    description: str | None = None
+
+
 class LoginToken(SQLModel, table=True):
     __tablename__ = "login_tokens"  # type: ignore
 
@@ -150,16 +162,3 @@ class LoginToken(SQLModel, table=True):
     )
 
 
-class UserStandardFieldValue(SQLModel, table=True):
-    __tablename__ = "user_standard_field_values"  # type: ignore
-    __table_args__ = (UniqueConstraint("user_id", "standard_field_key"),)
-
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
-    user_id: str = Field(index=True)
-    standard_field_key: str = Field(index=True)
-    value: str
-
-    updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime(timezone=True), nullable=False),
-    )

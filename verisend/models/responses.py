@@ -87,9 +87,18 @@ class FormListItem(BaseModel):
     updated_at: datetime
 
 
+class StandardFieldResponse(BaseModel):
+    id: UUID
+    key: str
+    label: str
+    field_type: str
+    group: str | None
+    default_options: list[str] | None
+    description: str | None
+
+
 class SubmitFormResponse(BaseModel):
     submission_id: UUID
-    standard_fields_saved: int
 
 
 class StylingResponse(StylingRequest):

@@ -8,14 +8,14 @@ from pathlib import Path
 from uuid import UUID
 
 import httpx
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from verisend.agents.extraction_agent import BatchExtractionResult, merge_batch_results, run_batch
 from verisend.utils.pdf import extract_page_images
 from verisend.workers.celery_app import celery_app
 from verisend.utils.blob_storage import get_blob_storage_client
 from verisend.utils.db import sync_engine
-from verisend.models.db_models import Form, FormImage, FormSection, ProcessingJob, JobStatus
+from verisend.models.db_models import Form, FormImage, FormSection, ProcessingJob, JobStatus, StandardField
 from verisend.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ def test_task(url: str):
     print("Worker done!")
 
 
-async def _run_all_batches(batch_inputs: list[dict]) -> list[BatchExtractionResult]:
+async def _run_all_batches(batch_inputs: list[dict], standard_fields: list[StandardField]) -> list[BatchExtractionResult]:
     """Run all batches sequentially in a single event loop."""
     results = []
     for batch in batch_inputs:
@@ -50,6 +50,7 @@ async def _run_all_batches(batch_inputs: list[dict]) -> list[BatchExtractionResu
             pages=batch["pages"],
             left_context_url=batch["left_context_url"],
             right_context_url=batch["right_context_url"],
+            standard_fields=standard_fields,
         )
         results.append(result)
     return results
@@ -150,7 +151,10 @@ def extract_form(self, job_id: str, form_id: str, pdf_url: str, summary: str | N
                     "right_context_url": right_context_url,
                 })
 
-            batch_results = asyncio.run(_run_all_batches(batch_inputs))
+            standard_fields = list(session.exec(select(StandardField)).all())
+            if not standard_fields:
+                raise Exception("No standard fields found in database. Seed them via POST /admin/standard-fields before running extraction.")
+            batch_results = asyncio.run(_run_all_batches(batch_inputs, standard_fields))
 
             # ------------------------------------------------------------------
             # 5. Merge sections

@@ -7,7 +7,7 @@ from sqlmodel import select
 
 from verisend.utils.blob_storage import BlobStorageContainer
 from verisend.utils.db import AsyncSession
-from verisend.models.db_models import Form, FormSection, FormSubmission, JobStatus, ProcessingJob, UserStandardFieldValue
+from verisend.models.db_models import Form, FormSection, FormSubmission, JobStatus, ProcessingJob
 from verisend.utils.auth import Authenticated
 from verisend.models.requests import ConfirmRequest, ExtractStylingRequest, SubmitFormRequest, StylingRequest, UpdateSectionsRequest
 from verisend.models.responses import (
@@ -468,41 +468,10 @@ async def submit_form(
     )
     session.add(submission)
 
-    # Extract and upsert standard field values
-    standard_fields = {
-        f.standard_field_key: f.value
-        for f in body.fields
-        if f.standard_field_key and f.value
-    }
-
-    existing = await session.exec(
-        select(UserStandardFieldValue).where(
-            UserStandardFieldValue.user_id == auth.user_id,
-            UserStandardFieldValue.standard_field_key.in_(list(standard_fields.keys())),  # type: ignore[union-attr]
-        )
-    )
-    existing_by_key = {sfv.standard_field_key: sfv for sfv in existing.all()}
-
-    for key, value in standard_fields.items():
-        if key in existing_by_key:
-            existing_by_key[key].value = value
-            existing_by_key[key].updated_at = now
-            session.add(existing_by_key[key])
-        else:
-            session.add(UserStandardFieldValue(
-                user_id=auth.user_id,
-                standard_field_key=key,
-                value=value,
-                updated_at=now,
-            ))
-
-    standard_fields_saved = len(standard_fields)
-
     await session.commit()
 
     return SubmitFormResponse(
         submission_id=submission_id,
-        standard_fields_saved=standard_fields_saved,
     )
 
 

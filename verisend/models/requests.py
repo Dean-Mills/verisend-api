@@ -55,6 +55,22 @@ class SubmitFormRequest(BaseModel):
     fields: list[FieldSubmission]
 
 
+class StandardFieldRequest(BaseModel):
+    key: str
+    label: str
+    field_type: str
+    group: str | None = None
+    default_options: list[str] | None = None
+    description: str | None = None
+
+
+class UpdateStandardFieldRequest(BaseModel):
+    label: str | None = None
+    group: str | None = None
+    default_options: list[str] | None = None
+    description: str | None = None
+
+
 class StylingRequest(BaseModel):
     primary_color: str
     accent_color: str
