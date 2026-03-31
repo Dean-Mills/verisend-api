@@ -25,6 +25,8 @@ from verisend.models.responses import (
     FormSectionsResponse,
     JobStatusResponse,
     SectionResponse,
+    SubmissionDetailResponse,
+    SubmissionListItem,
     SubmitFormResponse,
     StylingResponse,
     UpdateSectionsResponse,
@@ -608,3 +610,65 @@ async def submit_form(
     await session.commit()
 
     return SubmitFormResponse(submission_id=submission_id)
+
+
+# =============================================================================
+# Submission viewing (org users)
+# =============================================================================
+
+@router.get("/{form_id}/submissions", response_model=list[SubmissionListItem])
+async def list_submissions(
+    form_id: UUID,
+    auth: RequireOrgUser,
+    session: AsyncSession,
+):
+    """List all submissions for a form. Org members only."""
+    membership = await _get_user_org(session, UUID(auth.user_id))
+    await _get_org_form(session, form_id, membership.org_id)
+
+    result = await session.exec(
+        select(FormSubmission, User)
+        .join(User)
+        .where(FormSubmission.form_id == form_id)
+        .order_by(FormSubmission.created_at.desc())
+    )
+
+    return [
+        SubmissionListItem(
+            submission_id=sub.id,
+            user_id=user.id,
+            email=user.email,
+            data_url=sub.data_url,
+            completed_at=sub.completed_at,
+            created_at=sub.created_at,
+        )
+        for sub, user in result.all()
+    ]
+
+
+@router.get("/{form_id}/submissions/{submission_id}", response_model=SubmissionDetailResponse)
+async def get_submission(
+    form_id: UUID,
+    submission_id: UUID,
+    auth: RequireOrgUser,
+    session: AsyncSession,
+):
+    """Get a single submission. Org members only."""
+    membership = await _get_user_org(session, UUID(auth.user_id))
+    await _get_org_form(session, form_id, membership.org_id)
+
+    submission = await session.get(FormSubmission, submission_id)
+    if not submission or submission.form_id != form_id:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    user = await session.get(User, submission.user_id)
+
+    return SubmissionDetailResponse(
+        submission_id=submission.id,
+        form_id=submission.form_id,
+        user_id=submission.user_id,
+        email=user.email if user else "",
+        data_url=submission.data_url,
+        completed_at=submission.completed_at,
+        created_at=submission.created_at,
+    )

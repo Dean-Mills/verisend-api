@@ -137,6 +137,32 @@ class OrgApiKeyCreatedResponse(OrgApiKeyResponse):
 class KeypairStatusResponse(BaseModel):
     has_keypair: bool
     public_key: str | None
+    encrypted_private_key: str | None
+
+
+class MeResponse(BaseModel):
+    id: str
+    email: str
+    has_keypair: bool
+
+
+class SubmissionListItem(BaseModel):
+    submission_id: UUID
+    user_id: UUID
+    email: str
+    data_url: str | None
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class SubmissionDetailResponse(BaseModel):
+    submission_id: UUID
+    form_id: UUID
+    user_id: UUID
+    email: str
+    data_url: str | None
+    completed_at: datetime | None
+    created_at: datetime
 
 
 class SubmitFormResponse(BaseModel):
