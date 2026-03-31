@@ -67,6 +67,9 @@ async def create_org(
 
     org = Organization(
         name=body.name,
+        business_name=body.business_name,
+        registration_number=body.registration_number,
+        address=body.address,
         owner_id=user_id,
         public_key=body.public_key,
     )

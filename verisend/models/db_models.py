@@ -34,6 +34,9 @@ class Organization(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str
+    business_name: str | None = None
+    registration_number: str | None = None
+    address: str
     owner_id: UUID = Field(foreign_key="users.id", index=True)
     public_key: str | None = None
 

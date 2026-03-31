@@ -100,6 +100,9 @@ class StandardFieldResponse(BaseModel):
 class OrgResponse(BaseModel):
     id: UUID
     name: str
+    business_name: str | None
+    registration_number: str | None
+    address: str
     owner_id: UUID
     public_key: str | None
     created_at: datetime

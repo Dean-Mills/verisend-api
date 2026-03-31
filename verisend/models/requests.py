@@ -73,6 +73,9 @@ class UpdateStandardFieldRequest(BaseModel):
 
 class CreateOrgRequest(BaseModel):
     name: str
+    business_name: str | None = None
+    registration_number: str | None = None
+    address: str
     public_key: str
     encrypted_org_private_key: str  # encrypted with the owner's public key
 
