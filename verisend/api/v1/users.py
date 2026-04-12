@@ -1,5 +1,4 @@
 import logging
-from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import Response
@@ -33,7 +32,7 @@ async def get_me(
     session: AsyncSession,
 ):
     """Get the authenticated user's profile including org memberships."""
-    user = await session.get(User, UUID(auth.user_id))
+    user = await session.get(User, auth.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -70,7 +69,7 @@ async def setup_keypair(
     session: AsyncSession,
 ):
     """Save the user's public key and encrypted private key. Called once during vault setup."""
-    user = await session.get(User, UUID(auth.user_id))
+    user = await session.get(User, auth.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -89,7 +88,7 @@ async def get_keypair(
     session: AsyncSession,
 ):
     """Get the user's keypair status and encrypted private key."""
-    user = await session.get(User, UUID(auth.user_id))
+    user = await session.get(User, auth.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 

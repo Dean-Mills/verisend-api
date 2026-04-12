@@ -15,7 +15,7 @@ class JobStatus(str, Enum):
 class User(SQLModel, table=True):
     __tablename__ = "users"  # type: ignore
 
-    id: UUID = Field(primary_key=True)  # matches Keycloak sub
+    id: str = Field(primary_key=True)  # Clerk user ID (e.g. "user_2abc123")
     email: str = Field(unique=True, index=True)
     public_key: str | None = None
     encrypted_private_key: str | None = None
@@ -37,7 +37,7 @@ class Organization(SQLModel, table=True):
     business_name: str | None = None
     registration_number: str | None = None
     address: str
-    owner_id: UUID = Field(foreign_key="users.id", index=True)
+    owner_id: str = Field(foreign_key="users.id", index=True)
     public_key: str | None = None
 
     created_at: datetime = Field(
@@ -61,7 +61,7 @@ class OrgMembership(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     org_id: UUID = Field(foreign_key="organizations.id", index=True)
-    user_id: UUID = Field(foreign_key="users.id", index=True)
+    user_id: str = Field(foreign_key="users.id", index=True)
 
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -78,7 +78,7 @@ class OrgKeyGrant(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     org_id: UUID = Field(foreign_key="organizations.id", index=True)
-    user_id: UUID = Field(foreign_key="users.id", index=True)
+    user_id: str = Field(foreign_key="users.id", index=True)
     encrypted_org_private_key: str
 
     created_at: datetime = Field(
@@ -212,7 +212,7 @@ class FormSubmission(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     form_id: UUID = Field(foreign_key="forms.id", index=True)
-    user_id: UUID = Field(foreign_key="users.id", index=True)
+    user_id: str = Field(foreign_key="users.id", index=True)
 
     data_url: str | None = None
     completed_at: datetime | None = Field(
@@ -241,19 +241,5 @@ class StandardField(SQLModel, table=True):
     description: str | None = None
 
 
-class LoginToken(SQLModel, table=True):
-    __tablename__ = "login_tokens"  # type: ignore
-
-    token: str = Field(primary_key=True, index=True)
-    user_id: str
-    email: str = Field(index=True)
-    expires_at: datetime = Field(
-        sa_column=Column(DateTime(timezone=True), nullable=False),
-    )
-    used: bool = Field(default=False)
-    created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime(timezone=True), nullable=False),
-    )
 
 

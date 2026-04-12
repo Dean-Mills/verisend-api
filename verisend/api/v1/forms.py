@@ -1,21 +1,18 @@
-import asyncio
 import logging
-import secrets
 from uuid import UUID, uuid4
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, status
 from sqlmodel import select
 
 from verisend.utils.blob_storage import BlobStorageContainer
 from verisend.utils.db import AsyncSession
-from verisend.utils.keycloak_admin import KeycloakAdminDep
+from verisend.utils.clerk import ClerkDep
 from verisend.models.db_models import (
-    Form, FormSection, FormSubmission, JobStatus, LoginToken,
+    Form, FormSection, FormSubmission, JobStatus,
     Organization, OrgMembership, ProcessingJob, User,
 )
 from verisend.settings import settings
-from verisend.utils.email import send_magic_link_email
 from verisend.utils.auth import Authenticated, RequireOrgUser
 from verisend.models.requests import AssignFormRequest, ConfirmRequest, ExtractStylingRequest, StylingRequest, UpdateSectionsRequest
 from verisend.models.responses import (
@@ -55,7 +52,7 @@ router = APIRouter(prefix="/forms", tags=["forms"])
 # Helpers
 # =============================================================================
 
-async def _get_user_org(session: AsyncSession, user_id: UUID) -> OrgMembership:
+async def _get_user_org(session: AsyncSession, user_id: str) -> OrgMembership:
     """Get the user's org membership. Raises 403 if not in any org."""
     result = await session.exec(
         select(OrgMembership).where(OrgMembership.user_id == user_id)
@@ -84,7 +81,7 @@ async def list_active_forms(
     session: AsyncSession,
 ):
     """List active forms for the authenticated user's org."""
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
     statement = (
         select(Form)
         .where(Form.org_id == membership.org_id, Form.is_active == True, Form.is_deleted == False)
@@ -110,7 +107,7 @@ async def list_draft_forms(
     session: AsyncSession,
 ):
     """List draft forms for the authenticated user's org."""
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
     statement = (
         select(Form)
         .where(Form.org_id == membership.org_id, Form.is_active == False, Form.is_deleted == False)
@@ -140,7 +137,7 @@ async def list_assigned_forms(
         select(Form)
         .join(FormSubmission)
         .where(
-            FormSubmission.user_id == UUID(auth.user_id),
+            FormSubmission.user_id == auth.user_id,
             FormSubmission.completed_at == None,
             Form.is_active == True,
             Form.is_deleted == False,
@@ -177,7 +174,7 @@ async def upload(
     container: BlobStorageContainer,
     file: UploadFile = File(...),
 ):
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
 
     form_id = uuid4()
     now = datetime.now(timezone.utc)
@@ -220,7 +217,7 @@ async def confirm(
     auth: RequireOrgUser,
     session: AsyncSession,
 ):
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
     form = await _get_org_form(session, form_id, membership.org_id)
 
     now = datetime.now(timezone.utc)
@@ -255,7 +252,7 @@ async def get_status(
     auth: RequireOrgUser,
     session: AsyncSession,
 ):
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
     await _get_org_form(session, form_id, membership.org_id)
 
     statement = select(ProcessingJob).where(ProcessingJob.form_id == form_id)
@@ -280,7 +277,7 @@ async def get_sections(
     auth: RequireOrgUser,
     session: AsyncSession,
 ):
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
     form = await _get_org_form(session, form_id, membership.org_id)
 
     statement = (
@@ -334,7 +331,7 @@ async def update_sections(
     auth: RequireOrgUser,
     session: AsyncSession,
 ):
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
     form = await _get_org_form(session, form_id, membership.org_id)
 
     now = datetime.now(timezone.utc)
@@ -390,7 +387,7 @@ async def update_styling(
     auth: RequireOrgUser,
     session: AsyncSession,
 ):
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
     form = await _get_org_form(session, form_id, membership.org_id)
 
     form.styling = body.model_dump()
@@ -407,7 +404,7 @@ async def get_styling(
     auth: RequireOrgUser,
     session: AsyncSession,
 ):
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
     form = await _get_org_form(session, form_id, membership.org_id)
 
     if not form.styling:
@@ -422,7 +419,7 @@ async def activate(
     auth: RequireOrgUser,
     session: AsyncSession,
 ):
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
     form = await _get_org_form(session, form_id, membership.org_id)
 
     if form.is_active:
@@ -440,7 +437,7 @@ async def delete_form(
     auth: RequireOrgUser,
     session: AsyncSession,
 ):
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
     form = await _get_org_form(session, form_id, membership.org_id)
 
     form.is_deleted = True
@@ -455,10 +452,10 @@ async def assign_form(
     body: AssignFormRequest,
     auth: RequireOrgUser,
     session: AsyncSession,
-    keycloak: KeycloakAdminDep,
+    clerk: ClerkDep,
 ):
     """Assign a form to a user by email. Creates the user if they don't exist."""
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
     form = await _get_org_form(session, form_id, membership.org_id)
 
     if not form.is_active:
@@ -466,24 +463,24 @@ async def assign_form(
 
     email = body.email.lower()
 
-    # Find or create user in Keycloak
-    kc_user = await asyncio.to_thread(keycloak.find_user_by_email, email)
-    if not kc_user:
-        kc_user = await asyncio.to_thread(keycloak.create_user, email)
+    # Find or create user in Clerk
+    clerk_user = clerk.find_user_by_email(email)
+    if not clerk_user:
+        clerk_user = clerk.create_user(email)
 
-    kc_user_id = UUID(kc_user["id"])
+    clerk_user_id = clerk_user["id"]
 
     # Ensure local user record exists
-    user = await session.get(User, kc_user_id)
+    user = await session.get(User, clerk_user_id)
     if not user:
-        user = User(id=kc_user_id, email=email)
+        user = User(id=clerk_user_id, email=email)
         session.add(user)
 
     # Check not already assigned (pending)
     existing = await session.exec(
         select(FormSubmission).where(
             FormSubmission.form_id == form_id,
-            FormSubmission.user_id == kc_user_id,
+            FormSubmission.user_id == clerk_user_id,
             FormSubmission.completed_at == None,
         )
     )
@@ -494,25 +491,13 @@ async def assign_form(
     submission = FormSubmission(
         id=submission_id,
         form_id=form_id,
-        user_id=kc_user_id,
+        user_id=clerk_user_id,
     )
     session.add(submission)
-
-    # Send magic link to the assigned user
-    token = secrets.token_urlsafe(32)
-    login_token = LoginToken(
-        token=token,
-        user_id=str(kc_user_id),
-        email=email,
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-        used=False,
-    )
-    session.add(login_token)
-
     await session.commit()
 
-    magic_link = f"{settings.app_url}/auth/verify?token={token}"
-    await send_magic_link_email(email, magic_link)
+    # Send invitation email via Clerk
+    clerk.create_invitation(email, redirect_url=f"{settings.app_url}/forms/{form_id}/fill")
 
     return {"submission_id": str(submission_id), "email": email}
 
@@ -593,7 +578,7 @@ async def submit_form(
     if not form.is_active:
         raise HTTPException(status_code=400, detail="Form is not active")
 
-    user_id = UUID(auth.user_id)
+    user_id = auth.user_id
     now = datetime.now(timezone.utc)
 
     # Read encrypted payload from request body
@@ -644,7 +629,7 @@ async def list_submissions(
     session: AsyncSession,
 ):
     """List all submissions for a form. Org members only."""
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
     await _get_org_form(session, form_id, membership.org_id)
 
     result = await session.exec(
@@ -675,7 +660,7 @@ async def get_submission(
     session: AsyncSession,
 ):
     """Get a single submission. Org members only."""
-    membership = await _get_user_org(session, UUID(auth.user_id))
+    membership = await _get_user_org(session, auth.user_id)
     await _get_org_form(session, form_id, membership.org_id)
 
     submission = await session.get(FormSubmission, submission_id)

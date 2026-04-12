@@ -172,3 +172,4 @@ cython_debug/
 
 .env
 example_forms/*
+changelog

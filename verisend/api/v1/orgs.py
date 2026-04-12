@@ -1,15 +1,12 @@
-import asyncio
 import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
-from verisend.models.db_models import LoginToken, Organization, OrgMembership, OrgKeyGrant, OrgApiKey, User
+from verisend.models.db_models import Organization, OrgMembership, OrgKeyGrant, OrgApiKey, User
 from verisend.settings import settings
-from verisend.utils.email import send_magic_link_email
 from verisend.models.requests import (
     CreateOrgRequest,
     InviteMemberRequest,
@@ -25,7 +22,7 @@ from verisend.models.responses import (
 )
 from verisend.utils.auth import Authenticated, RequireOrgUser
 from verisend.utils.db import AsyncSession
-from verisend.utils.keycloak_admin import KeycloakAdminDep
+from verisend.utils.clerk import ClerkDep
 from verisend.models.roles import Role
 
 
@@ -39,7 +36,7 @@ TAGS = [
 router = APIRouter(prefix="/orgs", tags=["Organizations"])
 
 
-async def _require_org_member(session: AsyncSession, org_id: UUID, user_id: UUID) -> OrgMembership:
+async def _require_org_member(session: AsyncSession, org_id: UUID, user_id: str) -> OrgMembership:
     """Verify user is a member of the org, return membership."""
     result = await session.exec(
         select(OrgMembership).where(
@@ -53,7 +50,7 @@ async def _require_org_member(session: AsyncSession, org_id: UUID, user_id: UUID
     return membership
 
 
-async def _require_org_owner(session: AsyncSession, org: Organization, user_id: UUID) -> None:
+async def _require_org_owner(session: AsyncSession, org: Organization, user_id: str) -> None:
     """Verify user is the owner of the org."""
     if org.owner_id != user_id:
         raise HTTPException(status_code=403, detail="Only the organization owner can perform this action")
@@ -64,14 +61,14 @@ async def create_org(
     body: CreateOrgRequest,
     auth: Authenticated,
     session: AsyncSession,
-    keycloak: KeycloakAdminDep,
+    clerk: ClerkDep,
 ):
     """Create a new organization. The authenticated user becomes the owner."""
-    user_id = UUID(auth.user_id)
+    user_id = auth.user_id
 
-    # Assign org_user role if the user doesn't already have it
-    if auth.role != Role.ORG_USER:
-        await asyncio.to_thread(keycloak.assign_role, auth.user_id, Role.ORG_USER)
+    # Promote user to org_user role in Clerk
+    if auth.role != Role.ORG_USER and auth.role != Role.ADMIN:
+        clerk.set_user_role(user_id, Role.ORG_USER)
 
     org = Organization(
         name=body.name,
@@ -112,7 +109,7 @@ async def get_org(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    await _require_org_member(session, org_id, UUID(auth.user_id))
+    await _require_org_member(session, org_id, auth.user_id)
     return org
 
 
@@ -127,7 +124,7 @@ async def list_members(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    await _require_org_member(session, org_id, UUID(auth.user_id))
+    await _require_org_member(session, org_id, auth.user_id)
 
     # Get all memberships with user data
     result = await session.exec(
@@ -160,72 +157,60 @@ async def invite_member(
     body: InviteMemberRequest,
     auth: RequireOrgUser,
     session: AsyncSession,
-    keycloak: KeycloakAdminDep,
+    clerk: ClerkDep,
 ):
     """Invite a user to the org by email. Owner only."""
     org = await session.get(Organization, org_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    await _require_org_owner(session, org, UUID(auth.user_id))
+    await _require_org_owner(session, org, auth.user_id)
 
     email = body.email.lower()
 
-    # Find or create user in Keycloak
-    kc_user = await asyncio.to_thread(keycloak.find_user_by_email, email)
-    if not kc_user:
-        kc_user = await asyncio.to_thread(keycloak.create_user, email)
+    # Find or create user in Clerk with org_user role
+    clerk_user = clerk.find_user_by_email(email)
+    if not clerk_user:
+        clerk_user = clerk.create_user(email, role=Role.ORG_USER)
+    else:
+        clerk.set_user_role(clerk_user["id"], Role.ORG_USER)
 
-    kc_user_id = UUID(kc_user["id"])
+    clerk_user_id = clerk_user["id"]
 
-    # Ensure local user record exists (check by ID first, then by email)
-    user = await session.get(User, kc_user_id)
+    # Ensure local user record exists
+    user = await session.get(User, clerk_user_id)
     if not user:
         result = await session.exec(select(User).where(User.email == email))
         user = result.first()
     if not user:
-        user = User(id=kc_user_id, email=email)
+        user = User(id=clerk_user_id, email=email)
         session.add(user)
 
     # Check not already a member
     existing = await session.exec(
         select(OrgMembership).where(
             OrgMembership.org_id == org_id,
-            OrgMembership.user_id == kc_user_id,
+            OrgMembership.user_id == clerk_user_id,
         )
     )
     if existing.first():
         raise HTTPException(status_code=409, detail="User is already a member of this organization")
 
     # Create membership
-    membership = OrgMembership(org_id=org_id, user_id=kc_user_id)
+    membership = OrgMembership(org_id=org_id, user_id=clerk_user_id)
     session.add(membership)
 
-    # Capture user values before commit (avoids lazy-load after session expires attributes)
+    # Capture user values before commit
     user_public_key = user.public_key
-
-    # Assign org_user role in Keycloak
-    await asyncio.to_thread(keycloak.assign_role, str(kc_user_id), Role.ORG_USER)
-
-    # Send magic link email to the invited user
-    token = secrets.token_urlsafe(32)
-    login_token = LoginToken(
-        token=token,
-        user_id=str(kc_user_id),
-        email=email,
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=72),
-        used=False,
-    )
-    session.add(login_token)
 
     await session.commit()
     await session.refresh(membership)
 
-    magic_link = f"{settings.app_url}/auth/verify?token={token}"
-    await send_magic_link_email(email, magic_link)
+    # Send invitation email via Clerk
+    clerk.create_invitation(email, redirect_url=settings.app_url)
 
     return OrgMemberResponse(
-        user_id=kc_user_id,
+        user_id=clerk_user_id,
         email=email,
         has_public_key=user_public_key is not None,
         public_key=user_public_key,
@@ -241,7 +226,7 @@ async def invite_member(
 )
 async def create_key_grant(
     org_id: UUID,
-    user_id: UUID,
+    user_id: str,
     body: CreateKeyGrantRequest,
     auth: RequireOrgUser,
     session: AsyncSession,
@@ -258,7 +243,7 @@ async def create_key_grant(
     caller_grant = await session.exec(
         select(OrgKeyGrant).where(
             OrgKeyGrant.org_id == org_id,
-            OrgKeyGrant.user_id == UUID(auth.user_id),
+            OrgKeyGrant.user_id == auth.user_id,
         )
     )
     if not caller_grant.first():
@@ -308,7 +293,7 @@ async def get_my_key_grant(
     result = await session.exec(
         select(OrgKeyGrant).where(
             OrgKeyGrant.org_id == org_id,
-            OrgKeyGrant.user_id == UUID(auth.user_id),
+            OrgKeyGrant.user_id == auth.user_id,
         )
     )
     grant = result.first()
@@ -334,7 +319,7 @@ async def create_api_key(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    await _require_org_owner(session, org, UUID(auth.user_id))
+    await _require_org_owner(session, org, auth.user_id)
 
     # Generate a random API key and store only the hash
     raw_key = secrets.token_urlsafe(48)
@@ -372,7 +357,7 @@ async def list_api_keys(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    await _require_org_owner(session, org, UUID(auth.user_id))
+    await _require_org_owner(session, org, auth.user_id)
 
     result = await session.exec(select(OrgApiKey).where(OrgApiKey.org_id == org_id))
     return result.all()
@@ -390,7 +375,7 @@ async def delete_api_key(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    await _require_org_owner(session, org, UUID(auth.user_id))
+    await _require_org_owner(session, org, auth.user_id)
 
     api_key = await session.get(OrgApiKey, api_key_id)
     if not api_key or api_key.org_id != org_id:

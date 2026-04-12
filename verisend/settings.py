@@ -11,11 +11,9 @@ class AppSettings(BaseSettings):
     api_key: SecretStr
     gemini_api_key: SecretStr
 
-    # Keycloak
-    keycloak_server_url: str
-    keycloak_realm: str
-    keycloak_client_id: str
-    keycloak_client_secret: SecretStr
+    # Clerk
+    clerk_secret_key: SecretStr
+    clerk_publishable_key: str
 
     # Database
     db_pool_size: int = 20

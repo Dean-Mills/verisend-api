@@ -109,13 +109,13 @@ class OrgResponse(BaseModel):
     business_name: str | None
     registration_number: str | None
     address: str
-    owner_id: UUID
+    owner_id: str
     public_key: str | None
     created_at: datetime
 
 
 class OrgMemberResponse(BaseModel):
-    user_id: UUID
+    user_id: str
     email: str
     has_public_key: bool
     public_key: str | None
@@ -125,7 +125,7 @@ class OrgMemberResponse(BaseModel):
 
 class KeyGrantResponse(BaseModel):
     org_id: UUID
-    user_id: UUID
+    user_id: str
     created_at: datetime
 
 
@@ -162,7 +162,7 @@ class MeResponse(BaseModel):
 
 class SubmissionListItem(BaseModel):
     submission_id: UUID
-    user_id: UUID
+    user_id: str
     email: str
     data_url: str | None
     completed_at: datetime | None
@@ -172,7 +172,7 @@ class SubmissionListItem(BaseModel):
 class SubmissionDetailResponse(BaseModel):
     submission_id: UUID
     form_id: UUID
-    user_id: UUID
+    user_id: str
     email: str
     data_url: str | None
     completed_at: datetime | None
@@ -209,7 +209,7 @@ class ApiSubmissionListItem(BaseModel):
     submission_id: UUID
     form_id: UUID
     form_name: str
-    user_id: UUID
+    user_id: str
     email: str
     data_url: str | None
     completed_at: datetime | None
