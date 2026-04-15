@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from verisend.api import routes
+from verisent.api import routes
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 import logfire
@@ -13,7 +13,7 @@ logging.basicConfig(
 # logfire.configure()
 
 app = FastAPI(
-    title="Verisend API",
+    title="Verisent API",
 )
 
 # logfire.instrument_fastapi(app)
@@ -22,7 +22,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://verisend.zylentra.org"],
+    allow_origins=["http://localhost:5173", "https://verisent.zylentra.org"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

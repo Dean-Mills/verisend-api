@@ -5,23 +5,23 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
-from verisend.models.db_models import Organization, OrgMembership, OrgApiKey, User
-from verisend.settings import settings
-from verisend.models.requests import (
+from verisent.models.db_models import Organization, OrgMembership, OrgApiKey, User
+from verisent.settings import settings
+from verisent.models.requests import (
     CreateOrgRequest,
     InviteMemberRequest,
     CreateOrgApiKeyRequest,
 )
-from verisend.models.responses import (
+from verisent.models.responses import (
     OrgResponse,
     OrgMemberResponse,
     OrgApiKeyResponse,
     OrgApiKeyCreatedResponse,
 )
-from verisend.utils.auth import Authenticated, RequireOrgUser
-from verisend.utils.db import AsyncSession
-from verisend.utils.clerk import ClerkDep
-from verisend.models.roles import Role
+from verisent.utils.auth import Authenticated, RequireOrgUser
+from verisent.utils.db import AsyncSession
+from verisent.utils.clerk import ClerkDep
+from verisent.models.roles import Role
 
 
 TAGS = [

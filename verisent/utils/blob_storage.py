@@ -2,7 +2,7 @@ from typing import Annotated, Generator
 from azure.storage.blob import BlobServiceClient, ContainerClient
 from contextlib import contextmanager
 from fastapi import Depends
-from verisend.settings import settings
+from verisent.settings import settings
 
 
 @contextmanager

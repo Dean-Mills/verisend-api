@@ -5,7 +5,7 @@ from sqlalchemy import pool
 
 from alembic import context
 
-from verisend.settings import settings
+from verisent.settings import settings
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -30,7 +30,7 @@ target_metadata = None
 # ... etc.
 
 
-from verisend.models.db_models import *
+from verisent.models.db_models import *
 target_metadata = SQLModel.metadata
 
 def run_migrations_offline() -> None:

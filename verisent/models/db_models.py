@@ -92,6 +92,7 @@ class Form(SQLModel, table=True):
     name: str
     original_filename: str
     pdf_url: str
+    thumbnail_url: str | None = None
 
     summary: str | None = None
     context: str | None = None

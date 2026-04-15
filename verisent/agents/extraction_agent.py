@@ -5,8 +5,8 @@ from pydantic_ai.providers.google import GoogleProvider
 
 from pydantic_ai.messages import ImageUrl, UserContent
 
-from verisend.models.db_models import StandardField
-from verisend.settings import settings
+from verisent.models.db_models import StandardField
+from verisent.settings import settings
 
 
 # =============================================================================

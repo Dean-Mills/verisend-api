@@ -4,13 +4,13 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import Response
 
 from sqlmodel import select
-from verisend.models.db_models import OrgMembership, Organization, User
-from verisend.models.responses import MeResponse, UserOrgResponse
-from verisend.utils.auth import Authenticated
-from verisend.utils.blob_storage import BlobStorageContainer
-from verisend.utils.clerk import ClerkDep
-from verisend.utils.db import AsyncSession
-from verisend.models.roles import Role
+from verisent.models.db_models import OrgMembership, Organization, User
+from verisent.models.responses import MeResponse, UserOrgResponse
+from verisent.utils.auth import Authenticated
+from verisent.utils.blob_storage import BlobStorageContainer
+from verisent.utils.clerk import ClerkDep
+from verisent.utils.db import AsyncSession
+from verisent.models.roles import Role
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,11 @@ async def get_me(
     user = await session.get(User, auth.user_id)
     if not user:
         user = User(id=auth.user_id, email=auth.email or "")
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+    elif not user.email and auth.email:
+        user.email = auth.email
         session.add(user)
         await session.commit()
         await session.refresh(user)

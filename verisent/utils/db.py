@@ -3,7 +3,7 @@
 # from sqlmodel.ext.asyncio.session import AsyncSession as _AsyncSession
 
 # from fastapi import Depends
-# from verisend.settings import settings
+# from verisent.settings import settings
 
 # connection_str = settings.db_conn_str
 # if connection_str.startswith("postgresql://"):
@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession as _AsyncSession
 from sqlmodel import Session as _Session
 from fastapi import Depends
-from verisend.settings import settings
+from verisent.settings import settings
 
 # Async engine — for FastAPI
 async_engine = create_async_engine(

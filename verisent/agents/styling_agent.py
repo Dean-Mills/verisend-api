@@ -6,7 +6,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-from verisend.settings import settings
+from verisent.settings import settings
 
 
 class ExtractedStyling(BaseModel):

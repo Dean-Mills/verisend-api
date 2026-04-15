@@ -3,11 +3,11 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
-from verisend.models.db_models import StandardField
-from verisend.models.requests import StandardFieldRequest, UpdateStandardFieldRequest
-from verisend.models.responses import StandardFieldResponse
-from verisend.utils.auth import RequireAdmin
-from verisend.utils.db import AsyncSession
+from verisent.models.db_models import StandardField
+from verisent.models.requests import StandardFieldRequest, UpdateStandardFieldRequest
+from verisent.models.responses import StandardFieldResponse
+from verisent.utils.auth import RequireAdmin
+from verisent.utils.db import AsyncSession
 
 
 TAGS = [

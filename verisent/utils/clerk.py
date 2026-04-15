@@ -9,8 +9,8 @@ from typing import Annotated, Optional
 from clerk_backend_api import Clerk
 from fastapi import Depends
 
-from verisend.settings import settings
-from verisend.models.roles import Role
+from verisent.settings import settings
+from verisent.models.roles import Role
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +23,9 @@ class ClerkService:
 
     def find_user_by_email(self, email: str) -> Optional[dict]:
         """Find a user by email address. Returns dict with id/email or None."""
-        users = self.client.users.list(email_address=[email])
-        if users and users.data:
-            user = users.data[0]
-            return {"id": user.id, "email": email}
+        users = self.client.users.list(request={"email_address": [email]})
+        if users:
+            return {"id": users[0].id, "email": email}
         return None
 
     def create_user(self, email: str, role: Role | None = None) -> dict:
@@ -65,9 +64,11 @@ class ClerkService:
     def create_invitation(self, email: str, redirect_url: str | None = None) -> dict:
         """Send an invitation email to a user via Clerk."""
         invitation = self.client.invitations.create(
-            email_address=email,
-            redirect_url=redirect_url or settings.app_url,
-            ignore_existing=True,
+            request={
+                "email_address": email,
+                "redirect_url": redirect_url or settings.app_url,
+                "ignore_existing": True,
+            }
         )
         return {"id": invitation.id, "email": email}
 

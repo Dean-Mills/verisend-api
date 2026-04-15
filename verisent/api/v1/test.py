@@ -5,10 +5,10 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, AgentRunResultEvent, PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart, ThinkingPartDelta
 from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
-from verisend.utils.blob_storage import BlobStorageContainer
-from verisend.utils.db import AsyncSession
-from verisend.settings import settings
-from verisend.utils.auth import RequireOrgUser
+from verisent.utils.blob_storage import BlobStorageContainer
+from verisent.utils.db import AsyncSession
+from verisent.settings import settings
+from verisent.utils.auth import RequireOrgUser
 
 
 TAGS = [
@@ -29,7 +29,7 @@ async def upload_setup(
 ):
     """Upload a document to create a new setup (publisher+ only)"""
     from uuid import uuid4
-    from verisend.workers.tasks import extract_form
+    from verisent.workers.tasks import extract_form
 
     content = await file.read()
     file_id = uuid4()

@@ -4,14 +4,14 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
-from verisend.models.db_models import Form, FormSubmission, OrgApiKey, User
-from verisend.models.responses import (
+from verisent.models.db_models import Form, FormSubmission, OrgApiKey, User
+from verisent.models.responses import (
     ApiSubmissionDetailResponse,
     ApiSubmissionListItem,
     ApiSubmissionsListResponse,
 )
-from verisend.utils.auth import Authenticated
-from verisend.utils.db import AsyncSession
+from verisent.utils.auth import Authenticated
+from verisent.utils.db import AsyncSession
 
 
 TAGS = [

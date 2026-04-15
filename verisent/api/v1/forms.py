@@ -2,20 +2,21 @@ import logging
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 
+from azure.storage.blob import ContentSettings
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, status
 from sqlmodel import select
 
-from verisend.utils.blob_storage import BlobStorageContainer
-from verisend.utils.db import AsyncSession
-from verisend.utils.clerk import ClerkDep
-from verisend.models.db_models import (
+from verisent.utils.blob_storage import BlobStorageContainer
+from verisent.utils.db import AsyncSession
+from verisent.utils.clerk import ClerkDep
+from verisent.models.db_models import (
     Form, FormSection, FormSubmission, JobStatus,
     Organization, OrgMembership, ProcessingJob, User,
 )
-from verisend.settings import settings
-from verisend.utils.auth import Authenticated, RequireOrgUser
-from verisend.models.requests import AssignFormRequest, ConfirmRequest, ExtractStylingRequest, StylingRequest, UpdateSectionsRequest
-from verisend.models.responses import (
+from verisent.settings import settings
+from verisent.utils.auth import Authenticated, RequireOrgUser
+from verisent.models.requests import AssignFormRequest, ConfirmRequest, ExtractStylingRequest, StylingRequest, UpdateSectionsRequest
+from verisent.models.responses import (
     ConfirmResponse,
     FieldResponse,
     FillFieldResponse,
@@ -32,9 +33,11 @@ from verisend.models.responses import (
     UpdateSectionsResponse,
     UploadResponse,
 )
-from verisend.agents.styling_agent import extract_styling_from_url
-from verisend.agents.summarise_agent import summarise_form
-from verisend.workers.tasks import extract_form
+from verisent.agents.styling_agent import extract_styling_from_url
+from verisent.agents.summarise_agent import summarise_form
+from verisent.utils.email import send_form_assignment_email
+from verisent.utils.pdf import render_first_page_thumbnail_async
+from verisent.workers.tasks import extract_form
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +97,7 @@ async def list_active_forms(
             name=f.name,
             original_filename=f.original_filename,
             is_active=f.is_active,
+            thumbnail_url=f.thumbnail_url,
             created_at=f.created_at,
             updated_at=f.updated_at,
         )
@@ -120,6 +124,7 @@ async def list_draft_forms(
             name=f.name,
             original_filename=f.original_filename,
             is_active=f.is_active,
+            thumbnail_url=f.thumbnail_url,
             created_at=f.created_at,
             updated_at=f.updated_at,
         )
@@ -150,6 +155,7 @@ async def list_assigned_forms(
             name=f.name,
             original_filename=f.original_filename,
             is_active=f.is_active,
+            thumbnail_url=f.thumbnail_url,
             created_at=f.created_at,
             updated_at=f.updated_at,
         )
@@ -186,6 +192,20 @@ async def upload(
     blob_client.upload_blob(contents, overwrite=True)
     pdf_url = blob_client.url
 
+    # Render + upload a first-page thumbnail (best-effort).
+    thumbnail_url: str | None = None
+    try:
+        thumb_bytes = await render_first_page_thumbnail_async(contents)
+        thumb_blob = container.get_blob_client(f"forms/{form_id}/thumbnail.jpg")
+        thumb_blob.upload_blob(
+            thumb_bytes,
+            overwrite=True,
+            content_settings=ContentSettings(content_type="image/jpeg"),
+        )
+        thumbnail_url = thumb_blob.url
+    except Exception:
+        logger.exception("Failed to render/upload thumbnail for form %s", form_id)
+
     # Summarise
     result = await summarise_form(pdf_url)
 
@@ -195,6 +215,7 @@ async def upload(
         name=result.name,
         original_filename=file.filename or "",
         pdf_url=pdf_url,
+        thumbnail_url=thumbnail_url,
         summary=result.summary,
         created_at=now,
         updated_at=now,
@@ -465,6 +486,7 @@ async def assign_form(
 
     # Find or create user in Clerk
     clerk_user = clerk.find_user_by_email(email)
+    is_new_clerk_user = clerk_user is None
     if not clerk_user:
         clerk_user = clerk.create_user(email)
 
@@ -494,10 +516,30 @@ async def assign_form(
         user_id=clerk_user_id,
     )
     session.add(submission)
+
+    # Resolve everything we need for the email while the ORM objects are still fresh.
+    org = await session.get(Organization, membership.org_id)
+    org_name = org.name if org else None
+    form_name = form.name
+
     await session.commit()
 
-    # Send invitation email via Clerk
-    clerk.create_invitation(email, redirect_url=f"{settings.app_url}/forms/{form_id}/fill")
+    # For brand-new users, Clerk invitation sends a sign-up link to the app home.
+    if is_new_clerk_user:
+        try:
+            clerk.create_invitation(email, redirect_url=settings.app_url)
+        except Exception:
+            logger.exception("Failed to send Clerk invitation to %s", email)
+
+    # Always send our own assignment notification so existing users know too.
+    try:
+        await send_form_assignment_email(
+            to_email=email,
+            form_name=form_name,
+            org_name=org_name,
+        )
+    except Exception:
+        logger.exception("Failed to send assignment email to %s", email)
 
     return {"submission_id": str(submission_id), "email": email}
 

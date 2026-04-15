@@ -12,9 +12,9 @@ from fastapi import Depends
 from pydantic import BaseModel, SecretStr, field_validator
 from sqlmodel import select
 import jwt
-from verisend.models.roles import Role
-from verisend.settings import settings
-from verisend.models.authenticated_user import AuthenticatedUser
+from verisent.models.roles import Role
+from verisent.settings import settings
+from verisent.models.authenticated_user import AuthenticatedUser
 
 
 class FormsAuthenticationConfig(BaseModel):
@@ -73,7 +73,7 @@ class UnauthenticatedException(HTTPException):
 class VerifyToken:
     def __init__(self):
         jwks_url = _get_clerk_jwks_url()
-        self.jwks_client = jwt.PyJWKClient(jwks_url, headers={"User-Agent": "verisend-api/1.0"})
+        self.jwks_client = jwt.PyJWKClient(jwks_url, headers={"User-Agent": "verisent-api/1.0"})
         self.issuer = _get_clerk_issuer()
 
     async def verify_bearer_token(self, token: str) -> dict:
@@ -132,8 +132,8 @@ class Authentication:
                 )
 
             # Check org API keys (from DB)
-            from verisend.models.db_models import OrgApiKey
-            from verisend.utils.db import get_async_session
+            from verisent.models.db_models import OrgApiKey
+            from verisent.utils.db import get_async_session
 
             key_hash = hashlib.sha256(api_key.encode()).hexdigest()
             async for session in get_async_session():

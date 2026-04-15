@@ -1,10 +1,10 @@
 from celery import Celery
-from verisend.settings import settings
+from verisent.settings import settings
 
 celery_app = Celery(
-    "verisend",
+    "verisent",
     broker=settings.rabbitmq_url.get_secret_value(),
-    include=["verisend.workers.tasks"],
+    include=["verisent.workers.tasks"],
 )
 
 celery_app.conf.update(

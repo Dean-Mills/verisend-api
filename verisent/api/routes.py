@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from verisend.api import v1
+from verisent.api import v1
 from . import (
     admin,
     auth,

@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from verisend.models.requests import StylingRequest
+from verisent.models.requests import StylingRequest
 
 
 class UploadResponse(BaseModel):
@@ -63,6 +63,7 @@ class FormListItem(BaseModel):
     name: str
     original_filename: str
     is_active: bool
+    thumbnail_url: str | None
     created_at: datetime
     updated_at: datetime
 

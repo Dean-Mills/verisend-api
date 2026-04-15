@@ -1,6 +1,6 @@
 from typing import Optional
 from pydantic import BaseModel
-from verisend.models.roles import Role
+from verisent.models.roles import Role
 
 class AuthenticatedUser(BaseModel):
     """Model representing an authenticated user"""

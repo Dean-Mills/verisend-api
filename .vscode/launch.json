@@ -7,7 +7,7 @@
             "request": "launch",
             "module": "uvicorn",
             "args": [
-                "verisend.main:app",
+                "verisent.main:app",
                 "--reload"
             ],
             "jinja": true
@@ -18,7 +18,7 @@
             "request": "launch",
             "module": "celery",
             "args": [
-                "-A", "verisend.workers.celery_app",
+                "-A", "verisent.workers.celery_app",
                 "worker",
                 "--loglevel=info",
                 "--pool=solo"

@@ -1,5 +1,5 @@
 """
-Test script for the Verisend API using an org API key.
+Test script for the Verisent API using an org API key.
 Fetches submissions and decrypts them.
 """
 
